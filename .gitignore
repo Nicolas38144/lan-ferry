@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+.pnpm-store/
+dist/
+.env
+*.part-*
+.transfer-*.part
+.transfer-*.json*
+coverage/

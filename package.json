@@ -1,0 +1,26 @@
+{
+  "name": "file-transfer",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "description": "Local, verified transfer of any browser-selected file from a phone",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "pnpm run build && node --test tests/*.test.cjs"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^9.3.0",
+    "dotenv": "^16.6.1",
+    "fastify": "^5.6.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

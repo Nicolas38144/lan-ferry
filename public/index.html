@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef3f2">
+  <title>Transfert de fichiers</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <span class="eyebrow">TRANSFERT LOCAL</span>
+      <h1>Transfert de fichiers</h1>
+      <p>Envoyez vos fichiers directement vers votre PC, sans cloud.</p>
+    </header>
+    <section class="card select-card">
+      <div class="icon" aria-hidden="true">↑</div>
+      <h2>Tous vos fichiers, en toute simplicité</h2>
+      <p>Sélectionnez les fichiers à copier. Le contenu original sera conservé et vérifié.</p>
+      <label class="button secondary" for="file-input">Choisir des fichiers</label>
+      <input id="file-input" type="file" multiple>
+      <p class="hint">Documents, archives, audio, photos, vidéos et autres formats</p>
+    </section>
+    <section id="selection" class="card hidden" aria-live="polite">
+      <div class="section-head"><h2>Fichiers sélectionnés</h2><span id="selection-count"></span></div>
+      <p id="selection-size" class="muted"></p>
+      <button id="send" class="button primary" type="button">Envoyer vers le PC</button>
+      <button id="retry" class="button secondary hidden" type="button">Réessayer les erreurs</button>
+      <p id="message" class="message" role="status"></p>
+    </section>
+    <section id="progress" class="card hidden">
+      <div class="section-head"><h2>Transfert</h2><strong id="global-percent">0 %</strong></div>
+      <div class="bar"><div id="global-bar"></div></div>
+      <p id="global-detail" class="muted"></p>
+      <div class="current"><span id="current-name">En attente</span><strong id="current-percent"></strong></div>
+      <div class="bar small"><div id="current-bar"></div></div>
+      <p id="current-detail" class="muted"></p>
+    </section>
+    <section id="list-section" class="card hidden"><h2>Liste des fichiers</h2><ul id="file-list"></ul></section>
+    <footer>Connexion Wi-Fi locale · Vérification SHA-256 · Fichiers inchangés</footer>
+  </main>
+</body>
+</html>
