@@ -5,6 +5,7 @@ const { mkdtemp, readFile, readdir, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createServer } = require('../dist/server/server.js');
+const { transferStateDirectory } = require('../dist/services/resumable-storage.js');
 
 const hash = (data) => createHash('sha256').update(data).digest('hex');
 function multipart(data, filename = 'photo.jpg') {
@@ -35,8 +36,15 @@ test('HTTP : session requise, upload vérifié, collision et rejet SHA-256', asy
     const unauthorized = await server.inject({ method: 'POST', url: '/api/upload', headers, payload: body });
     assert.equal(unauthorized.statusCode, 401);
     const landing = await server.inject({ method: 'GET', url: `/?token=${auth.token}` });
-    assert.equal(landing.statusCode, 302);
+    assert.equal(landing.statusCode, 200);
+    assert.equal(landing.headers.location, undefined);
+    assert.match(landing.body, /Fichiers sélectionnés/);
+    assert.match(landing.headers['set-cookie'], /SameSite=Lax/);
     const cookie = landing.headers['set-cookie'].split(';')[0];
+    const sessionPage = await server.inject({ method: 'GET', url: '/', headers: { cookie } });
+    assert.equal(sessionPage.statusCode, 200);
+    const withoutSession = await server.inject({ method: 'GET', url: '/' });
+    assert.equal(withoutSession.statusCode, 401);
     for (const expectedName of ['photo été.jpg', 'photo été_1.jpg']) {
       const response = await server.inject({ method: 'POST', url: '/api/upload', headers: { ...headers, cookie }, payload: body });
       assert.equal(response.statusCode, 201, response.body);
@@ -85,5 +93,5 @@ test('HTTP : session requise, upload vérifié, collision et rejet SHA-256', asy
       assert.deepEqual(await readFile(join(destination, name)), contents);
       assert.equal(response.json().file.mime, mime);
     }
-  } finally { await server.close(); await rm(destination, { recursive: true, force: true }); }
+  } finally { await server.close(); await rm(destination, { recursive: true, force: true }); await rm(transferStateDirectory(destination), { recursive: true, force: true }); }
 });

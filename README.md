@@ -31,7 +31,7 @@ The terminal prints the destination folder, one or more local URLs, and a QR cod
 1. Connect the PC to the phone's hotspot, or put both devices on the same reachable Wi-Fi network.
 2. Start File Transfer on the PC.
 3. Scan the QR code with the phone. Its session URL opens an authorized browser session; the token changes when the server restarts.
-4. Tap **Choisir des fichiers**, select one or more files, then tap **Envoyer vers le PC**.
+4. Tap **Choisir des fichiers**, select one or more files, then tap **Envoyer vers le PC**. Use **Retirer les fichiers en attente** to remove files from the selection before sending; this does not delete them from the phone. If a phone gallery returns no files, try the phone's Files app or open the page in another browser.
 5. Wait for **Fichier vérifié — SHA-256 identique** on each file. Use **Réessayer les erreurs** if a transfer fails. The app resumes from the last block confirmed by the PC.
 
 After a page reload or a server restart, scan the current QR code again if needed, select the **same file**, and start the transfer. The browser keeps only the transfer ID in local storage; it cannot reopen a file from the phone without your selection. A new server start changes the authorization token but restores eligible partial transfers from disk.
@@ -44,7 +44,7 @@ If the phone cannot open the page, try another address shown in the terminal, ch
 
 The browser calculates the whole-file SHA-256 and per-block SHA-256 values in 4 MiB chunks inside a Web Worker. A main-thread fallback is used if Workers are unavailable. This keeps the interface responsive without loading a large file into memory. The server streams each block into a temporary file and verifies its size and SHA-256 before committing the new offset. On completion, it streams the temporary file once more to verify the whole-file SHA-256 before publishing the final file. The extra disk read is needed to verify a transfer resumed after a server restart.
 
-An interrupted or incorrect block is rolled back to the last confirmed offset. Partial transfers are retained for up to seven days so they can be resumed. Expired transfers are cleaned at startup and during server operation; unrecoverable orphaned temporary files are also cleaned. A final checksum mismatch deletes the partial transfer. Files already present are never silently overwritten: `report.pdf` becomes `report_1.pdf`, then `report_2.pdf`, and so on. File names are sanitized so they cannot escape the destination folder.
+An interrupted or incorrect block is rolled back to the last confirmed offset. Partial transfers are retained for up to seven days so they can be resumed. Pending transfer state, including temporary blocks and JSON manifests, lives in a sibling `.file-transfer-state-*` directory; the destination contains only completed files. The manifest and temporary block are removed after a verified transfer, and no completion JSON is written. Existing completion JSON files are removed on startup. Expired transfers are cleaned at startup and during server operation; unrecoverable orphaned temporary files are also cleaned. A final checksum mismatch deletes the partial transfer. Files already present are never silently overwritten: `report.pdf` becomes `report_1.pdf`, then `report_2.pdf`, and so on. File names are sanitized so they cannot escape the destination folder.
 
 Before creating a transfer, the server checks available disk space when the operating system provides it and reserves the remaining size of other partial transfers. It rejects an upload with a clear disk-space error when there is insufficient space. A different process could still fill the disk later; write errors leave the confirmed offset intact for a later retry.
 
@@ -56,7 +56,7 @@ By default, files go to `~/FileTransfer`. The local `.env` in this workspace ret
 
 ## Security
 
-A fresh random 192-bit token is generated at every server start. The QR URL contains that token. The server exchanges it for an `HttpOnly`, `SameSite=Strict` session cookie, then redirects the browser to remove the token from the visible URL. Upload and other API routes require the session. The `/admin` page is only available from the PC itself.
+A fresh random 192-bit token is generated at every server start. The QR URL contains that token and keeps it visible in the browser address bar. The server also sets an `HttpOnly`, `SameSite=Lax` session cookie for upload and other API routes. The `/admin` page is only available from the PC itself.
 
 Keep the QR code private. Transfer traffic uses HTTP on the local network, so use a trusted, protected hotspot or Wi-Fi network. Disabling authentication is intended only for a network you fully control. No Internet connection is needed for transfers after dependencies are installed.
 

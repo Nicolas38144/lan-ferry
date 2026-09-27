@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, open, readFile, readdir, rename, stat, statfs, truncate, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { sameSha256, validSha256 } from './checksum.js';
@@ -10,6 +10,12 @@ import { publishVerifiedFile, UploadError, validateMetadata, type FileMetadata, 
 export const CHUNK_BYTES = 4 * 1024 * 1024;
 export const PARTIAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function transferStateDirectory(destination: string): string {
+  const resolved = resolve(destination);
+  const id = createHash('sha256').update(resolved).digest('hex').slice(0, 16);
+  return join(dirname(resolved), `.file-transfer-state-${id}`);
+}
 
 interface TransferRecord {
   id: string;
@@ -28,6 +34,7 @@ function asUploadError(error: unknown): UploadError {
 }
 
 export class ResumableStorage {
+  private readonly stateDirectory: string;
   private readonly transfers = new Map<string, TransferRecord>();
   private readonly receipts = new Map<string, Receipt>();
   private activeChunks = 0;
@@ -39,11 +46,11 @@ export class ResumableStorage {
     private readonly maxBytes?: number,
     private readonly otherActive: () => number = () => 0,
     private readonly otherReserved: () => number = () => 0,
-  ) {}
+  ) { this.stateDirectory = transferStateDirectory(destination); }
 
-  private part(id: string): string { return join(this.destination, `.transfer-${id}.part`); }
-  private manifest(id: string): string { return join(this.destination, `.transfer-${id}.json`); }
-  private receiptPath(id: string): string { return join(this.destination, `.transfer-${id}.done.json`); }
+  private part(id: string): string { return join(this.stateDirectory, `.transfer-${id}.part`); }
+  private manifest(id: string): string { return join(this.stateDirectory, `.transfer-${id}.json`); }
+  private receiptPath(id: string): string { return join(this.stateDirectory, `.transfer-${id}.done.json`); }
 
   private async persist(record: TransferRecord): Promise<void> {
     const temporary = `${this.manifest(record.id)}.tmp-${randomUUID()}`;
@@ -60,7 +67,13 @@ export class ResumableStorage {
 
   async initialize(): Promise<void> {
     await mkdir(this.destination, { recursive: true });
-    const entries = await readdir(this.destination);
+    await mkdir(this.stateDirectory, { recursive: true });
+    for (const filename of await readdir(this.destination)) {
+      const match = /^\.transfer-([0-9a-f-]+)(?:\.part|\.json|\.done\.json|\.json\.tmp-[0-9a-f-]+)$/i.exec(filename);
+      if (!match || !idPattern.test(match[1] || '')) continue;
+      await rename(join(this.destination, filename), join(this.stateDirectory, filename));
+    }
+    const entries = await readdir(this.stateDirectory);
     const now = Date.now();
     for (const filename of entries) {
       const match = /^\.transfer-([0-9a-f-]+)\.json$/i.exec(filename);
@@ -81,21 +94,16 @@ export class ResumableStorage {
     for (const filename of entries) {
       const match = /^\.transfer-([0-9a-f-]+)\.done\.json$/i.exec(filename);
       if (!match || !idPattern.test(match[1] || '')) continue;
-      const id = match[1]!;
-      try {
-        const receipt = JSON.parse(await readFile(this.receiptPath(id), 'utf8')) as Receipt;
-        if (!Number.isSafeInteger(receipt.completedAt) || now - receipt.completedAt > PARTIAL_RETENTION_MS || !receipt.file?.savedAs) throw new Error('Expired receipt');
-        this.receipts.set(id, receipt);
-      } catch { await unlink(this.receiptPath(id)).catch(() => undefined); }
+      await unlink(this.receiptPath(match[1]!));
     }
     for (const filename of entries) {
       const match = /^\.transfer-([0-9a-f-]+)\.part$/i.exec(filename);
       if (!match || !idPattern.test(match[1] || '') || this.transfers.has(match[1]!)) continue;
-      const file = join(this.destination, filename);
+      const file = join(this.stateDirectory, filename);
       try { if (now - (await stat(file)).mtimeMs > 60 * 60 * 1000) await unlink(file); }
       catch { /* Another process may have removed it. */ }
     }
-    for (const filename of entries) {
+    for (const filename of await readdir(this.destination)) {
       const match = /^\.(.+)\.part$/i.exec(filename);
       if (!match || !idPattern.test(match[1] || '')) continue;
       const file = join(this.destination, filename);
@@ -104,7 +112,7 @@ export class ResumableStorage {
     }
     for (const filename of entries) {
       if (!/^\.transfer-[0-9a-f-]+\.json\.tmp-[0-9a-f-]+$/i.test(filename)) continue;
-      const file = join(this.destination, filename);
+      const file = join(this.stateDirectory, filename);
       try { if (now - (await stat(file)).mtimeMs > 60 * 60 * 1000) await unlink(file); }
       catch { /* Another process may have removed it. */ }
     }
@@ -216,7 +224,6 @@ export class ResumableStorage {
       const saved = await publishVerifiedFile(this.destination, this.part(id), record.metadata);
       const result: Receipt = { file: saved, completedAt: Date.now() };
       this.receipts.set(id, result);
-      await writeFile(this.receiptPath(id), JSON.stringify(result)).catch(() => undefined);
       await this.discard(id);
       return saved;
     } catch (error) { throw asUploadError(error); }
@@ -231,7 +238,6 @@ export class ResumableStorage {
     for (const [id, receipt] of this.receipts) {
       if (now - receipt.completedAt > PARTIAL_RETENTION_MS) {
         this.receipts.delete(id);
-        await unlink(this.receiptPath(id)).catch(() => undefined);
       }
     }
   }

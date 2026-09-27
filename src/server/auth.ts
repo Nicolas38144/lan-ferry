@@ -18,6 +18,6 @@ export class SessionAuth {
   }
 
   cookie(): string {
-    return `pt_session=${this.token}; HttpOnly; SameSite=Strict; Path=/`;
+    return `pt_session=${this.token}; HttpOnly; SameSite=Lax; Path=/`;
   }
 }

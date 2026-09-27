@@ -94,9 +94,10 @@ export async function publishVerifiedFile(destination: string, temporary: string
   return { ...metadata, savedAs, receivedAt: new Date().toISOString() };
 }
 
-export async function storeFile(destination: string, source: Readable, metadata: FileMetadata, onProgress?: (bytes: number) => void): Promise<StoredFile> {
+export async function storeFile(destination: string, source: Readable, metadata: FileMetadata, onProgress?: (bytes: number) => void, temporaryDirectory = destination): Promise<StoredFile> {
   await mkdir(destination, { recursive: true });
-  const temporary = join(destination, `.${randomUUID()}.part`);
+  await mkdir(temporaryDirectory, { recursive: true });
+  const temporary = join(temporaryDirectory, `.${randomUUID()}.part`);
   const hash = createHash('sha256');
   let bytes = 0;
   const meter = new Transform({

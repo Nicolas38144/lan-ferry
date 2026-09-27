@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const input = $('file-input'), send = $('send'), retry = $('retry');
+const input = $('file-input'), send = $('send'), clearPending = $('clear-pending'), retry = $('retry');
 const CHUNK_SIZE = 4 * 1024 * 1024;
 const items = [];
 let busy = false, concurrency = 2, startedAt = 0;
@@ -54,11 +54,28 @@ function clearSession(key) {
   try { localStorage.removeItem(key); } catch { /* Ignore unavailable storage. */ }
 }
 
-input.addEventListener('change', () => {
+function refreshSelection() {
+  const total = items.reduce((sum, item) => sum + item.file.size, 0);
+  const pending = items.some((item) => item.state === 'En attente');
+  $('selection-count').textContent = `${items.length} fichier${items.length > 1 ? 's' : ''}`;
+  $('selection-size').textContent = `Taille totale : ${formatBytes(total)}`;
+  $('selection').classList.toggle('hidden', !items.length);
+  $('list-section').classList.toggle('hidden', !items.length);
+  clearPending.classList.toggle('hidden', !pending);
+  clearPending.disabled = busy;
+  send.disabled = busy || !items.some((item) => item.state !== 'Terminé');
+}
+
+function addSelectedFiles() {
   if (busy) return;
-  items.length = 0;
-  $('file-list').replaceChildren();
-  for (const file of input.files || []) {
+  const picked = Array.from(input.files || []);
+  input.value = '';
+  if (!picked.length) {
+    $('picker-message').textContent = 'Aucun fichier reçu. Essayez de choisir les photos depuis l’application Fichiers ou d’ouvrir cette page dans un autre navigateur.';
+    return;
+  }
+  $('picker-message').textContent = '';
+  for (const file of picked) {
     const row = document.createElement('li'), details = document.createElement('div');
     const name = document.createElement('strong'), size = document.createElement('small'), status = document.createElement('span');
     name.textContent = file.name;
@@ -71,14 +88,27 @@ input.addEventListener('change', () => {
     items.push(item);
     setState(item, 'En attente');
   }
-  const total = items.reduce((sum, item) => sum + item.file.size, 0);
-  $('selection-count').textContent = `${items.length} fichier${items.length > 1 ? 's' : ''}`;
-  $('selection-size').textContent = `Taille totale : ${formatBytes(total)}`;
-  $('selection').classList.toggle('hidden', !items.length);
-  $('list-section').classList.toggle('hidden', !items.length);
+  refreshSelection();
   $('progress').classList.add('hidden');
   retry.classList.add('hidden');
   $('message').textContent = '';
+}
+
+input.addEventListener('change', addSelectedFiles);
+clearPending.addEventListener('click', () => {
+  if (busy) return;
+  let removed = 0;
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (items[index].state !== 'En attente') continue;
+    items[index].row.remove();
+    items.splice(index, 1);
+    removed++;
+  }
+  if (!removed) return;
+  refreshSelection();
+  updateProgress();
+  if (!items.length) $('progress').classList.add('hidden');
+  $('picker-message').textContent = `${removed} fichier${removed > 1 ? 's' : ''} retiré${removed > 1 ? 's' : ''} de la liste.`;
 });
 
 async function fallbackHash(file, onProgress) {
@@ -267,7 +297,7 @@ async function run(onlyErrors = false) {
   if (busy || !items.length) return;
   busy = true;
   input.disabled = true;
-  send.disabled = true;
+  refreshSelection();
   retry.classList.add('hidden');
   $('progress').classList.remove('hidden');
   $('message').textContent = '';
@@ -283,7 +313,7 @@ async function run(onlyErrors = false) {
   await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
   busy = false;
   input.disabled = false;
-  send.disabled = false;
+  refreshSelection();
   const errors = items.filter((item) => item.state === 'Erreur').length;
   retry.classList.toggle('hidden', !errors);
   $('message').textContent = errors ? `${errors} fichier${errors > 1 ? 's' : ''} en erreur. Vous pouvez réessayer.` : 'Tous les fichiers ont été transférés et vérifiés.';

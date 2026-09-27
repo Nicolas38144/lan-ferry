@@ -22,11 +22,13 @@
       <label class="button secondary" for="file-input">Choisir des fichiers</label>
       <input id="file-input" type="file" multiple>
       <p class="hint">Documents, archives, audio, photos, vidéos et autres formats</p>
+      <p id="picker-message" class="message" role="status"></p>
     </section>
     <section id="selection" class="card hidden" aria-live="polite">
       <div class="section-head"><h2>Fichiers sélectionnés</h2><span id="selection-count"></span></div>
       <p id="selection-size" class="muted"></p>
       <button id="send" class="button primary" type="button">Envoyer vers le PC</button>
+      <button id="clear-pending" class="button secondary hidden" type="button">Retirer les fichiers en attente</button>
       <button id="retry" class="button secondary hidden" type="button">Réessayer les erreurs</button>
       <p id="message" class="message" role="status"></p>
     </section>

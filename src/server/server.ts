@@ -6,7 +6,7 @@ import multipart from '@fastify/multipart';
 import QRCode from 'qrcode';
 import type { Config } from '../services/config.js';
 import { parseMetadata, storeFile, UploadError, type StoredFile } from '../services/file-storage.js';
-import { ResumableStorage } from '../services/resumable-storage.js';
+import { ResumableStorage, transferStateDirectory } from '../services/resumable-storage.js';
 import { SessionAuth } from './auth.js';
 import { networkAddresses } from './network.js';
 
@@ -58,7 +58,8 @@ export async function createServer(config: Config): Promise<{ server: FastifyIns
   server.get('/', async (request, reply) => {
     const query = request.query as { token?: string };
     if (typeof query.token === 'string' && auth.matches(query.token)) {
-      return reply.header('Set-Cookie', auth.cookie()).redirect('/');
+      reply.header('Set-Cookie', auth.cookie());
+      return reply.type('text/html; charset=utf-8').send(createReadStream(join(assets, 'index.html')));
     }
     if (!auth.authorized(request)) {
       return reply.code(401).type('text/html; charset=utf-8').send('<!doctype html><html lang="fr"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Accès requis</title><body style="font:18px system-ui;max-width:36rem;margin:4rem auto;padding:1rem"><h1>Accès requis</h1><p>Scannez le QR code affiché sur le PC pour ouvrir une session.</p></body></html>');
@@ -131,7 +132,7 @@ export async function createServer(config: Config): Promise<{ server: FastifyIns
       const saved = await storeFile(config.destination, part.file, metadata, (bytes) => {
         const entry = active.get(id);
         if (entry) entry.bytes = bytes;
-      });
+      }, transferStateDirectory(config.destination));
       files.push(saved);
       console.log(`Terminé : ${saved.savedAs} — SHA-256 ${saved.sha256}`);
       return reply.code(201).send({ message: 'Fichier vérifié — SHA-256 identique', file: saved });
