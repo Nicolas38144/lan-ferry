@@ -25,7 +25,7 @@ The terminal displays the QR code. You can also open [the PC page](http://127.0.
 2. Scan the QR code. Tap **Choisir plusieurs fichiers** and select a batch under **Fichiers** or **Parcourir**. You can also use **Ajouter depuis la galerie**.
 3. Check the selection, then tap **Envoyer vers le PC**. Wait for **Fichier vérifié**. The received files are saved in `output/` in the project folder.
 
-If the gallery closes after each media item, reopen it to add more items to the same list, or select the whole batch through **Fichiers** or **Parcourir**.
+If videos are missing from the gallery, try **Choisir des vidéos** or browse for the local files through **Fichiers** or **Parcourir**. If the gallery closes after each choice, reopen it to keep adding items to the same list.
 
 If a transfer stops, tap **Réessayer les erreurs**. After a page reload or server restart, select and send the same file again to resume. Scan the new QR code if the server restarted.
 

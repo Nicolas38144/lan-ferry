@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const fileInputs = [$('file-input'), $('media-input')];
+const fileInputs = document.querySelectorAll('.file-picker input[type="file"]');
 const send = $('send'), clearPending = $('clear-pending'), retry = $('retry');
 const CHUNK_SIZE = 4 * 1024 * 1024;
 const items = [];
