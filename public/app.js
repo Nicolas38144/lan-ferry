@@ -1,6 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const mediaInput = $('media-input');
-const fileInputs = [mediaInput, $('file-input')];
+const fileInputs = [$('file-input'), $('media-input')];
 const send = $('send'), clearPending = $('clear-pending'), retry = $('retry');
 const CHUNK_SIZE = 4 * 1024 * 1024;
 const items = [];
@@ -68,9 +67,8 @@ function refreshSelection() {
   for (const input of fileInputs) input.disabled = busy;
 }
 
-function showPickerFallback() {
-  if (busy) return;
-  $('picker-message').textContent = 'Aucun fichier ajouté. Pour passer par le stockage du téléphone, ouvrez « Choisir des fichiers », puis « Fichiers » ou « Parcourir ».';
+function showEmptySelection() {
+  if (!busy) $('picker-message').textContent = 'Aucun fichier ajouté.';
 }
 
 function addSelectedFiles(input) {
@@ -78,7 +76,7 @@ function addSelectedFiles(input) {
   const picked = Array.from(input.files || []);
   input.value = '';
   if (!picked.length) {
-    showPickerFallback();
+    showEmptySelection();
     return;
   }
   $('picker-message').textContent = '';
@@ -107,7 +105,7 @@ function addSelectedFiles(input) {
 
 for (const input of fileInputs) {
   input.addEventListener('change', () => addSelectedFiles(input));
-  input.addEventListener('cancel', showPickerFallback);
+  input.addEventListener('cancel', showEmptySelection);
 }
 clearPending.addEventListener('click', () => {
   if (busy) return;

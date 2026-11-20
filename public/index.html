@@ -21,15 +21,15 @@
       <p>Sélectionnez les fichiers à copier. Le contenu original sera conservé et vérifié.</p>
       <div class="file-pickers">
         <label class="file-picker">
-          <input id="media-input" type="file" accept="image/*,video/*" multiple>
-          <span class="button primary">Choisir des photos et vidéos</span>
+          <input id="file-input" type="file" multiple aria-describedby="picker-hint">
+          <span class="button primary">Choisir plusieurs fichiers</span>
         </label>
         <label class="file-picker">
-          <input id="file-input" type="file" multiple>
-          <span class="button secondary">Choisir des fichiers</span>
+          <input id="media-input" type="file" accept="image/*,video/*" multiple aria-describedby="picker-hint">
+          <span class="button secondary">Ajouter depuis la galerie</span>
         </label>
       </div>
-      <p class="hint">Documents, archives, audio, photos, vidéos et autres formats</p>
+      <p id="picker-hint" class="hint">Pour choisir un lot, ouvrez « Fichiers » ou « Parcourir » dans le sélecteur. Les sélections successives s’ajoutent à la liste avant l’envoi.</p>
       <p id="picker-message" class="message" role="status"></p>
     </section>
     <section id="selection" class="card hidden" aria-live="polite">
