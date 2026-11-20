@@ -19,8 +19,16 @@
       <div class="icon" aria-hidden="true">↑</div>
       <h2>Tous vos fichiers, en toute simplicité</h2>
       <p>Sélectionnez les fichiers à copier. Le contenu original sera conservé et vérifié.</p>
-      <label class="button secondary" for="file-input">Choisir des fichiers</label>
-      <input id="file-input" type="file" multiple>
+      <div class="file-pickers">
+        <label class="file-picker">
+          <input id="media-input" type="file" accept="image/*,video/*" multiple>
+          <span class="button primary">Choisir des photos et vidéos</span>
+        </label>
+        <label class="file-picker">
+          <input id="file-input" type="file" multiple>
+          <span class="button secondary">Choisir des fichiers</span>
+        </label>
+      </div>
       <p class="hint">Documents, archives, audio, photos, vidéos et autres formats</p>
       <p id="picker-message" class="message" role="status"></p>
     </section>

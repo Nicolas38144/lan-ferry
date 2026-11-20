@@ -1,5 +1,7 @@
 const $ = (id) => document.getElementById(id);
-const input = $('file-input'), send = $('send'), clearPending = $('clear-pending'), retry = $('retry');
+const mediaInput = $('media-input');
+const fileInputs = [mediaInput, $('file-input')];
+const send = $('send'), clearPending = $('clear-pending'), retry = $('retry');
 const CHUNK_SIZE = 4 * 1024 * 1024;
 const items = [];
 let busy = false, concurrency = 2, startedAt = 0;
@@ -63,37 +65,50 @@ function refreshSelection() {
   clearPending.classList.toggle('hidden', !pending);
   clearPending.disabled = busy;
   send.disabled = busy || !items.some((item) => item.state !== 'Terminé');
+  for (const input of fileInputs) input.disabled = busy;
 }
 
-function addSelectedFiles() {
+function showPickerFallback() {
+  if (busy) return;
+  $('picker-message').textContent = 'Aucun fichier ajouté. Pour passer par le stockage du téléphone, ouvrez « Choisir des fichiers », puis « Fichiers » ou « Parcourir ».';
+}
+
+function addSelectedFiles(input) {
   if (busy) return;
   const picked = Array.from(input.files || []);
   input.value = '';
   if (!picked.length) {
-    $('picker-message').textContent = 'Aucun fichier reçu. Essayez de choisir les photos depuis l’application Fichiers ou d’ouvrir cette page dans un autre navigateur.';
+    showPickerFallback();
     return;
   }
   $('picker-message').textContent = '';
+  const rows = document.createDocumentFragment();
+  const state = 'En attente';
   for (const file of picked) {
     const row = document.createElement('li'), details = document.createElement('div');
     const name = document.createElement('strong'), size = document.createElement('small'), status = document.createElement('span');
     name.textContent = file.name;
     size.textContent = formatBytes(file.size);
     status.className = 'state';
+    status.textContent = state;
+    row.dataset.state = state;
     details.append(name, size);
     row.append(details, status);
-    $('file-list').append(row);
-    const item = { file, row, status, state: '', loaded: 0, confirmed: 0, hashBytes: 0, hashInfo: null, sessionId: null, sentThisRun: 0, committedThisRun: 0 };
-    items.push(item);
-    setState(item, 'En attente');
+    rows.append(row);
+    items.push({ file, row, status, state, loaded: 0, confirmed: 0, hashBytes: 0, hashInfo: null, sessionId: null, sentThisRun: 0, committedThisRun: 0 });
   }
+  $('file-list').append(rows);
   refreshSelection();
+  updateProgress();
   $('progress').classList.add('hidden');
   retry.classList.add('hidden');
   $('message').textContent = '';
 }
 
-input.addEventListener('change', addSelectedFiles);
+for (const input of fileInputs) {
+  input.addEventListener('change', () => addSelectedFiles(input));
+  input.addEventListener('cancel', showPickerFallback);
+}
 clearPending.addEventListener('click', () => {
   if (busy) return;
   let removed = 0;
@@ -290,7 +305,6 @@ async function transfer(item) {
 async function run(onlyErrors = false) {
   if (busy || !items.length) return;
   busy = true;
-  input.disabled = true;
   refreshSelection();
   retry.classList.add('hidden');
   $('progress').classList.remove('hidden');
@@ -306,7 +320,6 @@ async function run(onlyErrors = false) {
   const worker = async () => { while (next < queue.length) await transfer(queue[next++]); };
   await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
   busy = false;
-  input.disabled = false;
   refreshSelection();
   const errors = items.filter((item) => item.state === 'Erreur').length;
   retry.classList.toggle('hidden', !errors);
