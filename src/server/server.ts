@@ -19,23 +19,34 @@ function escapeHtml(value: string): string {
 }
 
 function uploadFailure(reply: FastifyReply, error: unknown): FastifyReply {
-  const status = error instanceof UploadError ? error.statusCode : (error as { statusCode?: number }).statusCode || 500;
-  const message = status >= 500 && status !== 507 ? 'Erreur de réception ou d’écriture sur le PC' : (error as Error).message;
-  console.error(`Échec de transfert : ${(error as Error).message}`);
+  const status = (error as { statusCode?: number } | null)?.statusCode || 500;
+  const reason = error instanceof Error ? error.message : String(error);
+  const message = status >= 500 && status !== 507 ? 'Erreur de réception ou d’écriture sur le PC' : reason;
+  console.error(`Échec de transfert : ${reason}`);
   return reply.code(status).send({ error: message });
 }
 
 export async function createServer(config: Config): Promise<{ server: FastifyInstance; auth: SessionAuth }> {
   const server = Fastify({ logger: false, bodyLimit: 16 * 1024 });
   const auth = new SessionAuth(config.auth);
-  const files: StoredFile[] = [];
-  const active = new Map<string, { name: string; bytes: number; size: number }>();
+  const files = new Set<StoredFile>();
+  const directUploads = new Set<{ name: string; bytes: number; size: number }>();
   const resumable = new ResumableStorage(
     config.destination, config.concurrency, config.maxBytes,
-    () => active.size,
-    () => [...active.values()].reduce((sum, item) => sum + item.size - item.bytes, 0),
+    () => directUploads.size,
+    () => [...directUploads].reduce((sum, item) => sum + item.size - item.bytes, 0),
   );
   await resumable.initialize();
+  const stateDirectory = transferStateDirectory(config.destination);
+  const activeCount = () => directUploads.size + resumable.activeCount;
+  function verified(reply: FastifyReply, file: StoredFile, status: number): FastifyReply {
+    if (!files.has(file)) {
+      files.add(file);
+      console.log(`Terminé : ${file.savedAs} — SHA-256 ${file.sha256}`);
+    }
+    return reply.code(status).send({ message: 'Fichier vérifié — SHA-256 identique', file });
+  }
+
   const cleanupTimer = setInterval(() => resumable.cleanupExpired().catch((error: unknown) => console.error('Nettoyage des transferts incomplets impossible :', error)), 60 * 60 * 1000);
   cleanupTimer.unref();
   server.addHook('onClose', async () => clearInterval(cleanupTimer));
@@ -59,28 +70,30 @@ export async function createServer(config: Config): Promise<{ server: FastifyIns
     const query = request.query as { token?: string };
     if (typeof query.token === 'string' && auth.matches(query.token)) {
       reply.header('Set-Cookie', auth.cookie());
-      return reply.type('text/html; charset=utf-8').send(createReadStream(join(assets, 'index.html')));
-    }
-    if (!auth.authorized(request)) {
+    } else if (!auth.authorized(request)) {
       return reply.code(401).type('text/html; charset=utf-8').send('<!doctype html><html lang="fr"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Accès requis</title><body style="font:18px system-ui;max-width:36rem;margin:4rem auto;padding:1rem"><h1>Accès requis</h1><p>Scannez le QR code affiché sur le PC pour ouvrir une session.</p></body></html>');
     }
     return reply.type('text/html; charset=utf-8').send(createReadStream(join(assets, 'index.html')));
   });
 
-  for (const [url, name, mime] of [
-    ['/app.js', 'app.js', 'text/javascript; charset=utf-8'],
-    ['/sha256.js', 'sha256.js', 'text/javascript; charset=utf-8'],
-    ['/hash-worker.js', 'hash-worker.js', 'text/javascript; charset=utf-8'],
-    ['/style.css', 'style.css', 'text/css; charset=utf-8'],
+  for (const [name, mime] of [
+    ['app.js', 'text/javascript; charset=utf-8'],
+    ['sha256.js', 'text/javascript; charset=utf-8'],
+    ['hash-worker.js', 'text/javascript; charset=utf-8'],
+    ['style.css', 'text/css; charset=utf-8'],
   ] as const) {
-    server.get(url, async (_request, reply) => reply.type(mime).send(createReadStream(join(assets, name))));
+    server.get(`/${name}`, async (_request, reply) => reply.type(mime).send(createReadStream(join(assets, name))));
   }
 
   server.get('/api/status', async () => {
     const freeBytes = await resumable.freeBytes();
-    return { active: true, addresses, destination: config.destination, freeBytes, received: files.length, activeTransfers: active.size + resumable.activeCount, resumablePending: resumable.pendingCount, concurrency: config.concurrency };
+    return {
+      active: true, addresses, destination: config.destination, freeBytes,
+      received: files.size, activeTransfers: activeCount(),
+      resumablePending: resumable.pendingCount, concurrency: config.concurrency,
+    };
   });
-  server.get('/api/files', async () => ({ files }));
+  server.get('/api/files', async () => ({ files: [...files] }));
 
   server.post('/api/uploads', async (request, reply) => {
     try {
@@ -107,38 +120,29 @@ export async function createServer(config: Config): Promise<{ server: FastifyIns
   });
   server.post<{ Params: { id: string } }>('/api/uploads/:id/complete', async (request, reply) => {
     try {
-      const saved = await resumable.complete(request.params.id);
-      if (!files.some((file) => file.receivedAt === saved.receivedAt && file.savedAs === saved.savedAs)) {
-        files.push(saved);
-        console.log(`Terminé : ${saved.savedAs} — SHA-256 ${saved.sha256}`);
-      }
-      return reply.send({ message: 'Fichier vérifié — SHA-256 identique', file: saved });
+      return verified(reply, await resumable.complete(request.params.id), 200);
     } catch (error) { return uploadFailure(reply, error); }
   });
 
   server.post('/api/upload', async (request, reply) => {
-    if (active.size + resumable.activeCount >= config.concurrency) return reply.code(429).send({ error: 'Trop de transferts simultanés. Réessayez.' });
+    if (activeCount() >= config.concurrency) return reply.code(429).send({ error: 'Trop de transferts simultanés. Réessayez.' });
     let metadata;
     try { metadata = parseMetadata(request.headers, config.maxBytes); }
     catch (error) { return reply.code(error instanceof UploadError ? error.statusCode : 400).send({ error: (error as Error).message }); }
-    try { await resumable.assertSpace(metadata.size); }
-    catch (error) { return uploadFailure(reply, error); }
-    const id = `${Date.now()}-${Math.random()}`;
-    active.set(id, { name: metadata.name, bytes: 0, size: metadata.size });
-    console.log(`Début : ${metadata.name} (${metadata.size} octets) depuis ${request.ip}`);
+    const progress = { name: metadata.name, bytes: 0, size: metadata.size };
+    directUploads.add(progress);
     try {
+      await resumable.assertSpace();
+      console.log(`Début : ${metadata.name} (${metadata.size} octets) depuis ${request.ip}`);
       const part = await request.file();
       if (!part) throw new UploadError('Fichier manquant');
       const saved = await storeFile(config.destination, part.file, metadata, (bytes) => {
-        const entry = active.get(id);
-        if (entry) entry.bytes = bytes;
-      }, transferStateDirectory(config.destination));
-      files.push(saved);
-      console.log(`Terminé : ${saved.savedAs} — SHA-256 ${saved.sha256}`);
-      return reply.code(201).send({ message: 'Fichier vérifié — SHA-256 identique', file: saved });
+        progress.bytes = bytes;
+      }, stateDirectory);
+      return verified(reply, saved, 201);
     } catch (error) {
       return uploadFailure(reply, error);
-    } finally { active.delete(id); }
+    } finally { directUploads.delete(progress); }
   });
 
   server.get('/admin', async (request, reply) => {
@@ -151,7 +155,7 @@ export async function createServer(config: Config): Promise<{ server: FastifyIns
   });
   server.get('/admin/status', async (request, reply) => {
     if (!localClient(request.ip)) return reply.code(403).send({ error: 'Accès local uniquement' });
-    return { files, active: [...active.values(), ...resumable.activeTransfers], resumablePending: resumable.pendingCount };
+    return { files: [...files], active: [...directUploads, ...resumable.activeTransfers], resumablePending: resumable.pendingCount };
   });
   return { server, auth };
 }

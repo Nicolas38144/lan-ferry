@@ -52,3 +52,15 @@ export class Sha256 {
     return Array.from(this.h, (part) => part.toString(16).padStart(8, '0')).join('');
   }
 }
+
+export async function hashFileChunks(file, chunkSize, onProgress) {
+  const full = new Sha256();
+  const chunks = [];
+  for (let offset = 0; offset < file.size; offset += chunkSize) {
+    const bytes = new Uint8Array(await file.slice(offset, offset + chunkSize).arrayBuffer());
+    full.update(bytes);
+    chunks.push(new Sha256().update(bytes).hex());
+    await onProgress(offset + bytes.length);
+  }
+  return { sha256: full.hex(), chunks };
+}

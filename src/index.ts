@@ -1,4 +1,3 @@
-import { mkdir } from 'node:fs/promises';
 import QRCode from 'qrcode';
 import { loadConfig } from './services/config.js';
 import { createServer } from './server/server.js';
@@ -6,7 +5,6 @@ import { networkAddresses } from './server/network.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  await mkdir(config.destination, { recursive: true });
   const { server, auth } = await createServer(config);
   await server.listen({ host: config.host, port: config.port });
   const addresses = networkAddresses().filter((entry) => config.host === '0.0.0.0' || config.host === entry.address);

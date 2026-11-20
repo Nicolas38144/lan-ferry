@@ -32,7 +32,6 @@ function updateProgress() {
 
 function setState(item, state, error = '') {
   item.state = state;
-  item.error = error;
   item.status.textContent = error ? `${state} — ${error}` : state;
   item.row.dataset.state = state;
   updateProgress();
@@ -84,7 +83,7 @@ function addSelectedFiles() {
     details.append(name, size);
     row.append(details, status);
     $('file-list').append(row);
-    const item = { file, row, status, state: '', loaded: 0, confirmed: 0, hashBytes: 0, hashInfo: null, sessionId: null, sentThisRun: 0, committedThisRun: 0, error: '' };
+    const item = { file, row, status, state: '', loaded: 0, confirmed: 0, hashBytes: 0, hashInfo: null, sessionId: null, sentThisRun: 0, committedThisRun: 0 };
     items.push(item);
     setState(item, 'En attente');
   }
@@ -112,16 +111,11 @@ clearPending.addEventListener('click', () => {
 });
 
 async function fallbackHash(file, onProgress) {
-  const { Sha256 } = await import('./sha256.js');
-  const full = new Sha256(), chunks = [];
-  for (let offset = 0; offset < file.size; offset += CHUNK_SIZE) {
-    const bytes = new Uint8Array(await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer());
-    full.update(bytes);
-    chunks.push(new Sha256().update(bytes).hex());
-    onProgress(offset + bytes.length);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  return { sha256: full.hex(), chunks };
+  const { hashFileChunks } = await import('./sha256.js');
+  return hashFileChunks(file, CHUNK_SIZE, (bytes) => {
+    onProgress(bytes);
+    return pause(0);
+  });
 }
 
 async function hashFile(item) {

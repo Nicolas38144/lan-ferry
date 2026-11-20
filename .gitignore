@@ -2,6 +2,8 @@ node_modules/
 .npm-cache/
 .pnpm-store/
 dist/
+/output/
+/.file-transfer-state-*/
 .env
 *.part-*
 .transfer-*.part

@@ -2,14 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, open, readFile, readdir, rename, stat, statfs, truncate, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { Transform, type Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
 import { sameSha256, validSha256 } from './checksum.js';
-import { publishVerifiedFile, UploadError, validateMetadata, type FileMetadata, type StoredFile } from './file-storage.js';
+import { publishVerifiedFile, UploadError, validateMetadata, writeVerifiedStream, type FileMetadata, type StoredFile } from './file-storage.js';
 
 export const CHUNK_BYTES = 4 * 1024 * 1024;
 export const PARTIAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ORPHAN_RETENTION_MS = 60 * 60 * 1000;
 
 export function transferStateDirectory(destination: string): string {
   const resolved = resolve(destination);
@@ -33,6 +33,11 @@ function asUploadError(error: unknown): UploadError {
   return new UploadError('Erreur d’écriture sur le PC', 500);
 }
 
+async function removeIfOld(file: string, now: number, maxAge: number): Promise<void> {
+  try { if (now - (await stat(file)).mtimeMs > maxAge) await unlink(file); }
+  catch { /* Another process may have removed it. */ }
+}
+
 export class ResumableStorage {
   private readonly stateDirectory: string;
   private readonly transfers = new Map<string, TransferRecord>();
@@ -50,7 +55,6 @@ export class ResumableStorage {
 
   private part(id: string): string { return join(this.stateDirectory, `.transfer-${id}.part`); }
   private manifest(id: string): string { return join(this.stateDirectory, `.transfer-${id}.json`); }
-  private receiptPath(id: string): string { return join(this.stateDirectory, `.transfer-${id}.done.json`); }
 
   private async persist(record: TransferRecord): Promise<void> {
     const temporary = `${this.manifest(record.id)}.tmp-${randomUUID()}`;
@@ -68,7 +72,8 @@ export class ResumableStorage {
   async initialize(): Promise<void> {
     await mkdir(this.destination, { recursive: true });
     await mkdir(this.stateDirectory, { recursive: true });
-    for (const filename of await readdir(this.destination)) {
+    const destinationEntries = await readdir(this.destination);
+    for (const filename of destinationEntries) {
       const match = /^\.transfer-([0-9a-f-]+)(?:\.part|\.json|\.done\.json|\.json\.tmp-[0-9a-f-]+)$/i.exec(filename);
       if (!match || !idPattern.test(match[1] || '')) continue;
       await rename(join(this.destination, filename), join(this.stateDirectory, filename));
@@ -92,29 +97,21 @@ export class ResumableStorage {
       } catch { await this.discard(id); }
     }
     for (const filename of entries) {
-      const match = /^\.transfer-([0-9a-f-]+)\.done\.json$/i.exec(filename);
-      if (!match || !idPattern.test(match[1] || '')) continue;
-      await unlink(this.receiptPath(match[1]!));
-    }
-    for (const filename of entries) {
-      const match = /^\.transfer-([0-9a-f-]+)\.part$/i.exec(filename);
-      if (!match || !idPattern.test(match[1] || '') || this.transfers.has(match[1]!)) continue;
       const file = join(this.stateDirectory, filename);
-      try { if (now - (await stat(file)).mtimeMs > 60 * 60 * 1000) await unlink(file); }
-      catch { /* Another process may have removed it. */ }
+      const receiptId = /^\.transfer-([0-9a-f-]+)\.done\.json$/i.exec(filename)?.[1];
+      if (receiptId && idPattern.test(receiptId)) {
+        await unlink(file);
+        continue;
+      }
+      const partId = /^\.transfer-([0-9a-f-]+)\.part$/i.exec(filename)?.[1];
+      const orphanPart = partId && idPattern.test(partId) && !this.transfers.has(partId);
+      if (orphanPart || /^\.transfer-[0-9a-f-]+\.json\.tmp-[0-9a-f-]+$/i.test(filename)) {
+        await removeIfOld(file, now, ORPHAN_RETENTION_MS);
+      }
     }
-    for (const filename of await readdir(this.destination)) {
-      const match = /^\.(.+)\.part$/i.exec(filename);
-      if (!match || !idPattern.test(match[1] || '')) continue;
-      const file = join(this.destination, filename);
-      try { if (now - (await stat(file)).mtimeMs > PARTIAL_RETENTION_MS) await unlink(file); }
-      catch { /* Another process may have removed it. */ }
-    }
-    for (const filename of entries) {
-      if (!/^\.transfer-[0-9a-f-]+\.json\.tmp-[0-9a-f-]+$/i.test(filename)) continue;
-      const file = join(this.stateDirectory, filename);
-      try { if (now - (await stat(file)).mtimeMs > 60 * 60 * 1000) await unlink(file); }
-      catch { /* Another process may have removed it. */ }
+    for (const filename of destinationEntries) {
+      const id = /^\.(.+)\.part$/i.exec(filename)?.[1];
+      if (id && idPattern.test(id)) await removeIfOld(join(this.destination, filename), now, PARTIAL_RETENTION_MS);
     }
   }
 
@@ -123,11 +120,11 @@ export class ResumableStorage {
     catch { return null; }
   }
 
-  async assertSpace(bytes: number): Promise<void> {
+  async assertSpace(additionalBytes = 0): Promise<void> {
     const free = await this.freeBytes();
     if (free === null) return;
     const reserved = this.otherReserved() + [...this.transfers.values()].reduce((sum, item) => sum + item.metadata.size - item.offset, 0);
-    if (bytes + reserved > free) throw new UploadError('Espace disque insuffisant sur le PC', 507);
+    if (additionalBytes + reserved > free) throw new UploadError('Espace disque insuffisant sur le PC', 507);
   }
 
   async create(input: unknown): Promise<{ id: string; offset: number; chunkSize: number }> {
@@ -175,23 +172,16 @@ export class ResumableStorage {
     if (!validSha256(expectedHash)) throw new UploadError('SHA-256 du bloc invalide');
     record.busy = true;
     this.activeChunks++;
-    const hash = createHash('sha256');
-    let bytes = 0;
-    const meter = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        bytes += chunk.length;
-        if (bytes > expectedLength) return callback(new UploadError('Bloc plus grand que la taille annoncée'));
-        hash.update(chunk);
-        callback(null, chunk);
-      },
-    });
     try {
       const free = await this.freeBytes();
       if (free !== null && free < expectedLength) throw new UploadError('Espace disque insuffisant sur le PC', 507);
-      await pipeline(source, meter, createWriteStream(this.part(id), { flags: 'r+', start: offset }));
-      if ((source as Readable & { truncated?: boolean }).truncated || bytes !== expectedLength) throw new UploadError('Bloc interrompu ou incomplet');
-      if (!sameSha256(hash.digest('hex'), expectedHash)) throw new UploadError('SHA-256 du bloc différent : réessayez ce bloc');
-      const updated: TransferRecord = { ...record, offset: offset + bytes, updatedAt: Date.now() };
+      const target = createWriteStream(this.part(id), { flags: 'r+', start: offset });
+      await writeVerifiedStream(source, target, { size: expectedLength, sha256: expectedHash }, {
+        tooLarge: 'Bloc plus grand que la taille annoncée',
+        incomplete: 'Bloc interrompu ou incomplet',
+        mismatch: 'SHA-256 du bloc différent : réessayez ce bloc',
+      });
+      const updated: TransferRecord = { ...record, offset: offset + expectedLength, updatedAt: Date.now() };
       await this.persist(updated);
       record.offset = updated.offset;
       record.updatedAt = updated.updatedAt;

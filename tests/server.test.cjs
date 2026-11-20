@@ -5,7 +5,7 @@ const { mkdtemp, readFile, readdir, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createServer } = require('../dist/server/server.js');
-const { transferStateDirectory } = require('../dist/services/resumable-storage.js');
+const { ResumableStorage, transferStateDirectory } = require('../dist/services/resumable-storage.js');
 
 const hash = (data) => createHash('sha256').update(data).digest('hex');
 function multipart(data, filename = 'photo.jpg') {
@@ -94,4 +94,46 @@ test('HTTP : session requise, upload vérifié, collision et rejet SHA-256', asy
       assert.equal(response.json().file.mime, mime);
     }
   } finally { await server.close(); await rm(destination, { recursive: true, force: true }); await rm(transferStateDirectory(destination), { recursive: true, force: true }); }
+});
+
+test('a direct upload holds its slot while checking disk space', async (t) => {
+  const destination = await mkdtemp(join(tmpdir(), 'file-transfer-concurrency-'));
+  const { server } = await createServer({ port: 8080, host: '127.0.0.1', destination, concurrency: 1, auth: false });
+  t.after(async () => {
+    await server.close();
+    await rm(destination, { recursive: true, force: true });
+    await rm(transferStateDirectory(destination), { recursive: true, force: true });
+  });
+
+  let signalCheck;
+  let releaseCheck;
+  const checking = new Promise((resolve) => { signalCheck = resolve; });
+  const diskSpace = new Promise((resolve) => { releaseCheck = resolve; });
+  t.mock.method(ResumableStorage.prototype, 'freeBytes', () => {
+    signalCheck();
+    return diskSpace;
+  }, { times: 1 });
+
+  const data = Buffer.from('test');
+  const { body, boundary } = multipart(data);
+  const request = {
+    method: 'POST', url: '/api/upload', payload: body,
+    headers: {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      'x-file-name': 'photo.jpg',
+      'x-file-size': String(data.length),
+      'x-file-mime': 'image/jpeg',
+      'x-file-sha256': hash(data),
+    },
+  };
+  const first = Promise.resolve(server.inject(request));
+  try {
+    const reachedCheck = await Promise.race([checking.then(() => true), first.then(() => false)]);
+    assert.ok(reachedCheck, 'Upload finished before checking disk space');
+    assert.equal((await server.inject(request)).statusCode, 429);
+  } finally {
+    releaseCheck(1_000_000);
+  }
+  assert.equal((await first).statusCode, 201);
+  assert.equal((await server.inject(request)).statusCode, 201);
 });

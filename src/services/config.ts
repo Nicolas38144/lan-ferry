@@ -1,6 +1,7 @@
-import 'dotenv/config';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { loadEnvFile } from 'node:process';
+
+const projectRoot = resolve(__dirname, '../..');
 
 export interface Config {
   port: number;
@@ -17,9 +18,9 @@ function setting(name: Setting): string | undefined {
   return process.env[`FILE_TRANSFER_${name}`] ?? process.env[`PHOTO_TRANSFER_${name}`];
 }
 
-function integer(name: Setting, fallback: number, min: number, max: number): number {
+function integer(name: Setting, min: number, max: number): number | undefined {
   const raw = setting(name);
-  if (raw === undefined || raw === '') return fallback;
+  if (!raw) return undefined;
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value < min || value > max) {
     throw new Error(`FILE_TRANSFER_${name} doit être un entier entre ${min} et ${max}`);
@@ -28,7 +29,11 @@ function integer(name: Setting, fallback: number, min: number, max: number): num
 }
 
 export function loadConfig(): Config {
-  const maxRaw = setting('MAX_BYTES');
+  try { loadEnvFile(join(projectRoot, '.env')); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
   const host = setting('HOST') || '0.0.0.0';
   if (!/^(0\.0\.0\.0|127\.0\.0\.1|localhost|\d{1,3}(?:\.\d{1,3}){3})$/.test(host)) {
     throw new Error('FILE_TRANSFER_HOST doit être une adresse IPv4 locale');
@@ -38,11 +43,11 @@ export function loadConfig(): Config {
     throw new Error('FILE_TRANSFER_AUTH doit valoir true ou false');
   }
   return {
-    port: integer('PORT', 8080, 1, 65535),
+    port: integer('PORT', 1, 65535) ?? 8080,
     host,
-    destination: resolve(setting('DESTINATION') || join(homedir(), 'FileTransfer')),
-    concurrency: integer('CONCURRENCY', 2, 1, 8),
-    maxBytes: maxRaw ? integer('MAX_BYTES', 0, 1, Number.MAX_SAFE_INTEGER) : undefined,
+    destination: resolve(setting('DESTINATION') || join(projectRoot, 'output')),
+    concurrency: integer('CONCURRENCY', 1, 8) ?? 2,
+    maxBytes: integer('MAX_BYTES', 1, Number.MAX_SAFE_INTEGER),
     auth: authRaw !== 'false',
   };
 }
