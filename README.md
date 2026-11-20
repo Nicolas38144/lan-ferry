@@ -4,11 +4,17 @@ Send photos and other files from your phone to your PC over the local network.
 
 ## Start the server
 
-With Node.js 22 or later and pnpm installed, run these commands in the project folder:
+With Node.js 22.13 or later and [pnpm](https://pnpm.io/installation) installed, run these commands in the project folder:
 
 ```sh
-pnpm install
-pnpm dev
+pnpm install --frozen-lockfile
+pnpm run dev
+```
+
+If PowerShell finds an old Corepack launcher first and your pnpm installation is in `%APPDATA%\npm`, put that directory first for the current session, then rerun the commands above.
+
+```powershell
+$env:Path = "$env:APPDATA\npm;$env:Path"
 ```
 
 The terminal displays the QR code. You can also open [the PC page](http://127.0.0.1:8080/admin) to see the QR code and received files.
